@@ -9,14 +9,12 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strconv"
-	"text/template"
 	"time"
 
 	"github.com/beevik/etree"
@@ -96,6 +94,7 @@ type IdentityProvider struct {
 	ServiceProviderProvider ServiceProviderProvider
 	SessionProvider         SessionProvider
 	AssertionMaker          AssertionMaker
+	TemplateProvider        TemplateProvider
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -705,32 +704,14 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 	// the only supported binding is the HTTP-POST binding
 	switch req.ACSEndpoint.Binding {
 	case HTTPPostBinding:
-		tmpl := template.Must(template.New("saml-post-form").Parse(`<html>` +
-			`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
-			`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
-			`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-			`<input type="submit" value="Continue" />` +
-			`</form>` +
-			`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
-			`</html>`))
-		data := struct {
-			URL          string
-			SAMLResponse string
-			RelayState   string
-		}{
-			URL:          req.ACSEndpoint.Location,
-			SAMLResponse: base64.StdEncoding.EncodeToString(responseBuf),
-			RelayState:   req.RelayState,
+		if req.IDP.TemplateProvider == nil {
+			req.IDP.TemplateProvider = &DefaultTemplateProvider{}
 		}
 
-		buf := bytes.NewBuffer(nil)
-		if err := tmpl.Execute(buf, data); err != nil {
-			return err
-		}
-		if _, err := io.Copy(w, buf); err != nil {
-			return err
-		}
-		return nil
+		return req.IDP.TemplateProvider.MakeHTTPPostTemplate(w,
+			req.ACSEndpoint.Location,
+			base64.StdEncoding.EncodeToString(responseBuf),
+			req.RelayState)
 
 	default:
 		return fmt.Errorf("%s: unsupported binding %s",
